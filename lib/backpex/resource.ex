@@ -359,7 +359,7 @@ defmodule Backpex.Resource do
 
     item
     |> change(attrs, changeset_function, assigns, assocs, nil, :update)
-    |> repo.update()
+    |> update_single(item, repo)
     |> after_save(after_save)
     |> broadcast("updated", pubsub)
   end
@@ -468,6 +468,32 @@ defmodule Backpex.Resource do
     |> String.downcase()
     # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
     |> String.to_atom()
+  end
+
+  defp update_single(%Ecto.Changeset{valid?: false} = chgset, _item, _repo), do: {:error, chgset}
+
+  defp update_single(%Ecto.Changeset{} = chgset, item, repo) do
+    schema = chgset.data.__struct__
+
+    selector =
+      schema.__schema__(:primary_key)
+      |> Enum.map(fn key ->
+        {key, Map.get(item, key)}
+      end)
+
+    changes =
+      chgset.changes
+      |> Enum.map(fn {k, v} -> {k, v} end)
+
+    query = from(
+      sch in schema,
+      where: ^selector
+    )
+
+    case repo.alter_update_all(query, set: changes) do
+      {0, nil} -> {:ok, Ecto.Changeset.apply_changes(chgset)}
+      _ -> {:error, Ecto.Changeset.add_error(chgset, :id, "Could not update schema")}
+    end
   end
 
   defp after_save({:ok, item}, func) do
